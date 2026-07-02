@@ -1,5 +1,5 @@
-import { RoofEstimator } from "@/components/RoofEstimator";
+import { SolarSetuApp } from "@/components/SolarSetuApp";
 
 export default function Home() {
-  return <RoofEstimator />;
+  return <SolarSetuApp />;
 }

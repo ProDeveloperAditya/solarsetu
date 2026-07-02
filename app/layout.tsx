@@ -13,9 +13,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SolarSetu — Rooftop Solar ROI Estimator",
+  title: "SolarSetu — Rooftop Solar ROI Estimator for India",
   description:
-    "Draw your rooftop and estimate solar generation, PM Surya Ghar subsidy, and payback — for any address in India.",
+    "Draw your rooftop on a satellite map and get solar generation, the PM Surya Ghar subsidy, payback period, and 25-year ROI — powered by NASA irradiance data. No signup, no API keys.",
+  keywords: [
+    "rooftop solar",
+    "solar calculator India",
+    "PM Surya Ghar",
+    "solar subsidy",
+    "solar payback",
+    "NASA POWER",
+  ],
+  openGraph: {
+    title: "SolarSetu — Is your roof worth solar?",
+    description:
+      "Trace your roof → real NASA irradiance → PM Surya Ghar subsidy → payback in seconds.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -28,7 +42,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full bg-slate-950 text-slate-100">{children}</body>
     </html>
   );
 }

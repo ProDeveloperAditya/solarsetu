@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
-import type * as L from "leaflet";
+import * as L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "leaflet/dist/leaflet.css";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
@@ -11,12 +11,25 @@ import type { Feature, Polygon } from "geojson";
 
 interface RoofMapProps {
   onRoofChange: (polygon: Feature<Polygon> | null) => void;
+  /**
+   * A roof supplied from outside the map (e.g. the instant demo). When it
+   * changes (by reference), the map replaces any drawn shape with it, renders
+   * it as an editable layer, and flies to it.
+   */
+  externalRoof?: Feature<Polygon> | null;
 }
 
 // Default view: central New Delhi at building-level zoom so the satellite
 // imagery is immediately useful before the user searches for their address.
 const DEFAULT_CENTER: [number, number] = [28.6139, 77.209];
 const DEFAULT_ZOOM = 18;
+
+const ROOF_STYLE = {
+  color: "#f59e0b",
+  fillColor: "#f59e0b",
+  fillOpacity: 0.25,
+  weight: 2,
+};
 
 /** Free-text address search via OpenStreetMap Nominatim (keyless, India-scoped). */
 function SearchBox() {
@@ -69,9 +82,13 @@ function SearchBox() {
   );
 }
 
-/** Wires up Geoman polygon drawing and reports the drawn roof upward. */
-function DrawControls({ onRoofChange }: RoofMapProps) {
+/**
+ * Wires up Geoman polygon drawing, renders externally supplied roofs, and
+ * reports the active roof upward.
+ */
+function DrawControls({ onRoofChange, externalRoof }: RoofMapProps) {
   const map = useMap();
+  const externalLayerRef = useRef<L.GeoJSON | null>(null);
 
   useEffect(() => {
     map.pm.addControls({
@@ -89,12 +106,7 @@ function DrawControls({ onRoofChange }: RoofMapProps) {
       rotateMode: false,
       dragMode: false,
     });
-    map.pm.setPathOptions({
-      color: "#f59e0b",
-      fillColor: "#f59e0b",
-      fillOpacity: 0.25,
-      weight: 2,
-    });
+    map.pm.setPathOptions(ROOF_STYLE);
 
     const emit = (layer: L.Layer) => {
       const feature = (layer as unknown as {
@@ -107,6 +119,10 @@ function DrawControls({ onRoofChange }: RoofMapProps) {
       // Keep only the most recent shape — one roof at a time.
       for (const layer of map.pm.getGeomanLayers() as L.Layer[]) {
         if (layer !== event.layer) map.removeLayer(layer);
+      }
+      if (externalLayerRef.current) {
+        map.removeLayer(externalLayerRef.current);
+        externalLayerRef.current = null;
       }
       emit(event.layer);
       event.layer.on("pm:edit", () => emit(event.layer));
@@ -128,10 +144,37 @@ function DrawControls({ onRoofChange }: RoofMapProps) {
     };
   }, [map, onRoofChange]);
 
+  // Render an externally supplied roof (instant demo) and fly to it.
+  useEffect(() => {
+    if (!externalRoof) return;
+
+    for (const layer of map.pm.getGeomanLayers() as L.Layer[]) {
+      map.removeLayer(layer);
+    }
+    if (externalLayerRef.current) {
+      map.removeLayer(externalLayerRef.current);
+    }
+
+    const layer = L.geoJSON(externalRoof, { style: ROOF_STYLE }).addTo(map);
+    externalLayerRef.current = layer;
+
+    // Keep the demo shape editable so users can tweak it like a drawn one.
+    layer.eachLayer((child) => {
+      child.on("pm:edit", () => {
+        const feature = (child as unknown as {
+          toGeoJSON: () => Feature<Polygon>;
+        }).toGeoJSON();
+        onRoofChange(feature);
+      });
+    });
+
+    map.flyToBounds(layer.getBounds(), { maxZoom: 19, duration: 1.4 });
+  }, [externalRoof, map, onRoofChange]);
+
   return null;
 }
 
-export function RoofMap({ onRoofChange }: RoofMapProps) {
+export function RoofMap({ onRoofChange, externalRoof }: RoofMapProps) {
   return (
     <MapContainer
       center={DEFAULT_CENTER}
@@ -147,7 +190,7 @@ export function RoofMap({ onRoofChange }: RoofMapProps) {
         maxZoom={21}
       />
       <SearchBox />
-      <DrawControls onRoofChange={onRoofChange} />
+      <DrawControls onRoofChange={onRoofChange} externalRoof={externalRoof} />
     </MapContainer>
   );
 }

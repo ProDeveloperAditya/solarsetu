@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   Sun,
@@ -19,6 +19,9 @@ import {
   Sparkles,
   Copy,
   Check,
+  Building2,
+  Trash2,
+  CloudOff,
 } from "lucide-react";
 import type { Feature, Polygon } from "geojson";
 import { analyzePolygon, type RoofGeometry } from "@/lib/geometry";
@@ -29,8 +32,22 @@ import {
   type ProductionResult,
 } from "@/lib/solar";
 import { computeFinance, type FinanceResult } from "@/lib/finance";
+import { buildHorizonProfile, monthlyBeamShadeFraction } from "@/lib/shading";
 import { makeDemoRoof } from "@/lib/demoRoof";
+import type { RoofMapApi } from "./RoofMap";
 import { MonthlyGenerationChart, SavingsChart } from "./ResultCharts";
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+interface Obstruction {
+  id: string;
+  feature: Feature<Polygon>;
+  /** Height above the roof, metres. */
+  deltaH: number;
+}
 
 const HORIZON_YEARS = 25;
 
@@ -150,6 +167,37 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
   const [irrLoading, setIrrLoading] = useState(false);
   const [irrError, setIrrError] = useState<string | null>(null);
 
+  // Shading: user-marked obstructions (buildings/trees taller than the roof).
+  const [obstructions, setObstructions] = useState<Obstruction[]>([]);
+  const [obstructionMode, setObstructionMode] = useState(false);
+  const mapApiRef = useRef<RoofMapApi | null>(null);
+
+  function handleObstructionAdd(id: string, feature: Feature<Polygon>) {
+    setObstructions((prev) => [...prev, { id, feature, deltaH: 6 }]);
+    setObstructionMode(false);
+  }
+
+  function handleObstructionEdit(id: string, feature: Feature<Polygon>) {
+    setObstructions((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, feature } : o))
+    );
+  }
+
+  function handleObstructionRemove(id: string) {
+    setObstructions((prev) => prev.filter((o) => o.id !== id));
+  }
+
+  function removeObstruction(id: string) {
+    mapApiRef.current?.removeObstruction(id);
+    handleObstructionRemove(id);
+  }
+
+  function setObstructionHeight(id: string, deltaH: number) {
+    setObstructions((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, deltaH } : o))
+    );
+  }
+
   function loadDemoRoof() {
     const demo = makeDemoRoof();
     setRoof(demo);
@@ -196,6 +244,16 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
 
   const usableArea = geometry ? (geometry.areaSqm * usablePct) / 100 : 0;
 
+  // Horizon profile + per-month beam blocking from the marked obstructions.
+  const shadeFractions = useMemo(() => {
+    if (!geometry || obstructions.length === 0) return null;
+    const horizon = buildHorizonProfile(
+      geometry.centroid,
+      obstructions.map((o) => ({ polygon: o.feature, deltaHeightM: o.deltaH }))
+    );
+    return monthlyBeamShadeFraction(geometry.centroid.lat, horizon);
+  }, [geometry, obstructions]);
+
   const production: ProductionResult | null = useMemo(() => {
     if (!geometry || !irradiance) return null;
     return estimateProduction({
@@ -206,8 +264,30 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
       usableAreaSqm: usableArea,
       moduleDensity,
       performanceRatio: performanceRatio / 100,
+      beamShadeMonthly: shadeFractions ?? undefined,
     });
-  }, [geometry, irradiance, tilt, azimuth, usableArea, moduleDensity, performanceRatio]);
+  }, [geometry, irradiance, tilt, azimuth, usableArea, moduleDensity, performanceRatio, shadeFractions]);
+
+  // Same system with an open horizon — for the "what shading costs you" delta.
+  const shadingLoss = useMemo(() => {
+    if (!geometry || !irradiance || !production || !shadeFractions) return null;
+    const unshaded = estimateProduction({
+      irradiance,
+      latitude: geometry.centroid.lat,
+      tilt,
+      azimuth,
+      usableAreaSqm: usableArea,
+      moduleDensity,
+      performanceRatio: performanceRatio / 100,
+    });
+    if (unshaded.annualEnergyKwh <= 0) return null;
+    const worstMonth = shadeFractions.indexOf(Math.max(...shadeFractions));
+    return {
+      annualPct: (1 - production.annualEnergyKwh / unshaded.annualEnergyKwh) * 100,
+      worstMonth,
+      worstMonthPct: (shadeFractions[worstMonth] ?? 0) * 100,
+    };
+  }, [geometry, irradiance, production, shadeFractions, tilt, azimuth, usableArea, moduleDensity, performanceRatio]);
 
   const finance: FinanceResult | null = useMemo(() => {
     if (!production || production.systemSizeKwp <= 0) return null;
@@ -239,6 +319,11 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
       `Payback: ${finance.paybackYears != null ? `${finance.paybackYears.toFixed(1)} years` : `over ${HORIZON_YEARS} years`}`,
       `${HORIZON_YEARS}-year net savings: ${inr(finance.lifetimeNetSavings)}`,
       `CO₂ avoided: ${fmt(finance.co2AvoidedTonnes, 1)} tonnes`,
+      ...(shadingLoss
+        ? [
+            `Shading: −${shadingLoss.annualPct.toFixed(1)}%/yr from ${obstructions.length} marked obstruction(s), worst in ${MONTH_LABELS[shadingLoss.worstMonth]}`,
+          ]
+        : []),
       `Assumptions: tilt ${tilt}°, azimuth ${azimuth}°, PR ${performanceRatio}%, tariff ₹${tariff}/kWh (+${tariffEscalation}%/yr), degradation ${degradation}%/yr`,
       "— generated with SolarSetu · github.com/ProDeveloperAditya/solarsetu",
     ].join("\n");
@@ -253,12 +338,29 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
     tariff,
     tariffEscalation,
     degradation,
+    shadingLoss,
+    obstructions.length,
   ]);
 
   return (
     <div className="flex h-full flex-col bg-slate-950 text-slate-100 lg:flex-row">
       <div className="relative min-h-[45vh] flex-1">
-        <RoofMap onRoofChange={setRoof} externalRoof={externalRoof} />
+        <RoofMap
+          onRoofChange={setRoof}
+          externalRoof={externalRoof}
+          obstructionMode={obstructionMode}
+          onObstructionAdd={handleObstructionAdd}
+          onObstructionEdit={handleObstructionEdit}
+          onObstructionRemove={handleObstructionRemove}
+          apiRef={mapApiRef}
+        />
+        {obstructionMode && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-[1050] flex justify-center">
+            <span className="rounded-full bg-rose-500/95 px-4 py-1.5 text-xs font-semibold text-white shadow-lg">
+              Click points around the building/tree — click the first point to finish
+            </span>
+          </div>
+        )}
       </div>
 
       <aside className="w-full shrink-0 space-y-4 overflow-y-auto border-t border-slate-800 p-5 lg:w-96 lg:border-l lg:border-t-0">
@@ -397,6 +499,89 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
           <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/50 p-4 animate-fade-up">
             <MonthlyGenerationChart production={production} />
             <SavingsChart finance={finance} />
+          </div>
+        )}
+
+        {/* Shading — user-marked obstructions */}
+        {geometry && (
+          <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+            <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-slate-400">
+              <Building2 className="h-3.5 w-3.5" />
+              Shading
+            </p>
+
+            {obstructions.length === 0 && (
+              <p className="text-xs leading-relaxed text-slate-500">
+                Tall building or tree nearby? India has no open 3-D building
+                data, so mark it yourself — SolarSetu builds a horizon profile
+                and simulates the sun&apos;s path hour-by-hour to work out what
+                it costs you.
+              </p>
+            )}
+
+            {obstructions.map((obstruction, index) => (
+              <div key={obstruction.id} className="rounded-lg bg-slate-800/60 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm text-slate-300">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500/70 ring-1 ring-rose-400" />
+                    Obstruction {index + 1}
+                  </span>
+                  <button
+                    onClick={() => removeObstruction(obstruction.id)}
+                    aria-label={`Remove obstruction ${index + 1}`}
+                    className="rounded p-1 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-400"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <Slider
+                  label="Taller than your roof by"
+                  value={obstruction.deltaH}
+                  min={1}
+                  max={30}
+                  step={1}
+                  suffix=" m"
+                  onChange={(v) => setObstructionHeight(obstruction.id, v)}
+                  hint="Approximate height above YOUR roof (1 floor ≈ 3 m)."
+                />
+              </div>
+            ))}
+
+            {shadingLoss && (
+              <div className="rounded-lg bg-rose-500/10 px-3 py-2.5 ring-1 ring-rose-500/30">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 text-rose-200/80">
+                    <CloudOff className="h-4 w-4" />
+                    Annual shading loss
+                  </span>
+                  <span className="font-mono font-semibold text-rose-300">
+                    −{shadingLoss.annualPct.toFixed(1)}%
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-rose-200/50">
+                  Worst month: {MONTH_LABELS[shadingLoss.worstMonth]} (−
+                  {shadingLoss.worstMonthPct.toFixed(0)}% of direct sun). Already
+                  reflected in all numbers above.
+                </p>
+              </div>
+            )}
+
+            {obstructionMode ? (
+              <button
+                onClick={() => setObstructionMode(false)}
+                className="w-full rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 transition hover:bg-rose-500/20"
+              >
+                Cancel drawing
+              </button>
+            ) : (
+              <button
+                onClick={() => setObstructionMode(true)}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-rose-500/50 hover:text-rose-300"
+              >
+                <Building2 className="h-3.5 w-3.5" />
+                Mark a nearby building / tree
+              </button>
+            )}
           </div>
         )}
 

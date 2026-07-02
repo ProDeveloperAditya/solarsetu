@@ -13,7 +13,8 @@ Most "solar calculators" are a spreadsheet behind a form: you type your bill, th
 - **Real irradiance for your exact roof** — pulls NASA POWER climatology for the roof's coordinates, not a city-level average.
 - **A real transposition model** — Liu-Jordan isotropic transposition converts horizontal irradiance to what your *tilted, oriented* panels actually receive.
 - **The PM Surya Ghar subsidy engine** — the tiered central subsidy (₹30k/kW to 2 kW, ₹18k for the 3rd, ₹78k cap) plus optional state top-ups and net metering — the part generic calculators ignore.
-- **Transparent by design** — every assumption (usable area, tilt, azimuth, module density, performance ratio, tariff, cost, escalation, degradation) is a visible, adjustable slider. The estimate is auditable, not a black box.
+- **Shading without 3-D city data** — India has no open building-height dataset, so SolarSetu inverts the problem: you mark the tall building/tree next door and say how much taller than your roof it is; the engine builds a **horizon profile** and simulates the sun's position through every daylight hour of the year to compute a per-month beam-blocking fraction. "The 6 m building to your south costs you 22% in December, 3% in June."
+- **Transparent by design** — every assumption (usable area, tilt, azimuth, module density, performance ratio, tariff, cost, escalation, degradation, obstruction heights) is a visible, adjustable control. The estimate is auditable, not a black box.
 
 ---
 
@@ -85,7 +86,6 @@ No API keys required — the map (Esri imagery), geocoding (OpenStreetMap Nomina
 
 - **Google Solar API** — auto-detect roof geometry for covered addresses (US/EU) for higher accuracy.
 - **CV roof detection** — segment the roof from satellite tiles so drawing is optional.
-- **Shading model** — account for nearby buildings/trees (integrates a shadow-geometry pass).
 - **PDF report** and **save/compare** across multiple roofs.
 
 ---

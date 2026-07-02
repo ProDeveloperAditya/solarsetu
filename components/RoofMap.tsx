@@ -9,14 +9,21 @@ import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { Search, Loader2 } from "lucide-react";
 import type { Feature, Polygon } from "geojson";
 
+export interface RoofMapApi {
+  /** Programmatically remove an obstruction layer from the map. */
+  removeObstruction: (id: string) => void;
+}
+
 interface RoofMapProps {
   onRoofChange: (polygon: Feature<Polygon> | null) => void;
-  /**
-   * A roof supplied from outside the map (e.g. the instant demo). When it
-   * changes (by reference), the map replaces any drawn shape with it, renders
-   * it as an editable layer, and flies to it.
-   */
+  /** A roof supplied from outside (instant demo): replaces any drawn shape. */
   externalRoof?: Feature<Polygon> | null;
+  /** While true, the next drawn polygon is an obstruction, not the roof. */
+  obstructionMode?: boolean;
+  onObstructionAdd?: (id: string, polygon: Feature<Polygon>) => void;
+  onObstructionEdit?: (id: string, polygon: Feature<Polygon>) => void;
+  onObstructionRemove?: (id: string) => void;
+  apiRef?: React.MutableRefObject<RoofMapApi | null>;
 }
 
 interface SearchResult {
@@ -24,6 +31,8 @@ interface SearchResult {
   lng: number;
   label: string;
 }
+
+type MetaLayer = L.Layer & { _kind?: "roof" | "obstruction"; _obsId?: string };
 
 // Default view: central New Delhi at building-level zoom so the satellite
 // imagery is immediately useful before the user searches for their address.
@@ -35,6 +44,14 @@ const ROOF_STYLE = {
   fillColor: "#f59e0b",
   fillOpacity: 0.25,
   weight: 2,
+};
+
+const OBSTRUCTION_STYLE = {
+  color: "#f43f5e",
+  fillColor: "#f43f5e",
+  fillOpacity: 0.25,
+  weight: 2,
+  dashArray: "6 4",
 };
 
 // Esri's keyless reference layers, designed to overlay World Imagery:
@@ -154,12 +171,28 @@ function LayerToggle({
 }
 
 /**
- * Wires up Geoman polygon drawing, renders externally supplied roofs, and
- * reports the active roof upward.
+ * Wires up Geoman drawing for the roof and obstructions, renders externally
+ * supplied roofs, and reports all shapes upward.
  */
-function DrawControls({ onRoofChange, externalRoof }: RoofMapProps) {
+function DrawControls({
+  onRoofChange,
+  externalRoof,
+  obstructionMode = false,
+  onObstructionAdd,
+  onObstructionEdit,
+  onObstructionRemove,
+  apiRef,
+}: RoofMapProps) {
   const map = useMap();
   const externalLayerRef = useRef<L.GeoJSON | null>(null);
+  const obstructionLayers = useRef(new Map<string, L.Layer>());
+  const idCounter = useRef(0);
+
+  // Keep latest values in refs so the main effect subscribes exactly once.
+  const modeRef = useRef(obstructionMode);
+  modeRef.current = obstructionMode;
+  const callbacksRef = useRef({ onObstructionAdd, onObstructionEdit, onObstructionRemove });
+  callbacksRef.current = { onObstructionAdd, onObstructionEdit, onObstructionRemove };
 
   useEffect(() => {
     map.pm.addControls({
@@ -179,58 +212,112 @@ function DrawControls({ onRoofChange, externalRoof }: RoofMapProps) {
     });
     map.pm.setPathOptions(ROOF_STYLE);
 
-    const emit = (layer: L.Layer) => {
-      const feature = (layer as unknown as {
-        toGeoJSON: () => Feature<Polygon>;
-      }).toGeoJSON();
-      onRoofChange(feature);
-    };
+    const toFeature = (layer: L.Layer): Feature<Polygon> =>
+      (layer as unknown as { toGeoJSON: () => Feature<Polygon> }).toGeoJSON();
 
-    const handleCreate = (event: { layer: L.Layer }) => {
-      // Keep only the most recent shape — one roof at a time.
-      for (const layer of map.pm.getGeomanLayers() as L.Layer[]) {
-        if (layer !== event.layer) map.removeLayer(layer);
+    const clearRoofLayers = (except?: L.Layer) => {
+      for (const layer of map.pm.getGeomanLayers() as MetaLayer[]) {
+        if (layer._kind !== "obstruction" && layer !== except) map.removeLayer(layer);
       }
-      if (externalLayerRef.current) {
+      if (externalLayerRef.current && externalLayerRef.current !== except) {
         map.removeLayer(externalLayerRef.current);
         externalLayerRef.current = null;
       }
-      emit(event.layer);
-      event.layer.on("pm:edit", () => emit(event.layer));
     };
 
-    const handleRemove = () => {
-      if ((map.pm.getGeomanLayers() as L.Layer[]).length === 0) {
-        onRoofChange(null);
+    const handleCreate = (event: { layer: L.Layer }) => {
+      const layer = event.layer as MetaLayer;
+
+      if (modeRef.current) {
+        // ── Obstruction ────────────────────────────────────────────────
+        const id = `obs-${++idCounter.current}`;
+        layer._kind = "obstruction";
+        layer._obsId = id;
+        (layer as unknown as L.Path).setStyle?.(OBSTRUCTION_STYLE);
+        obstructionLayers.current.set(id, layer);
+        layer.on("pm:edit", () =>
+          callbacksRef.current.onObstructionEdit?.(id, toFeature(layer))
+        );
+        callbacksRef.current.onObstructionAdd?.(id, toFeature(layer));
+        return;
       }
+
+      // ── Roof (one at a time) ──────────────────────────────────────────
+      layer._kind = "roof";
+      clearRoofLayers(layer);
+      onRoofChange(toFeature(layer));
+      layer.on("pm:edit", () => onRoofChange(toFeature(layer)));
+    };
+
+    const handleRemove = (event: { layer: L.Layer }) => {
+      const layer = event.layer as MetaLayer;
+      if (layer._kind === "obstruction" && layer._obsId) {
+        obstructionLayers.current.delete(layer._obsId);
+        callbacksRef.current.onObstructionRemove?.(layer._obsId);
+        return;
+      }
+      const roofsLeft = (map.pm.getGeomanLayers() as MetaLayer[]).filter(
+        (l) => l._kind !== "obstruction"
+      );
+      if (roofsLeft.length === 0) onRoofChange(null);
     };
 
     map.on("pm:create", handleCreate as unknown as L.LeafletEventHandlerFn);
-    map.on("pm:remove", handleRemove);
+    map.on("pm:remove", handleRemove as unknown as L.LeafletEventHandlerFn);
 
     return () => {
       map.off("pm:create", handleCreate as unknown as L.LeafletEventHandlerFn);
-      map.off("pm:remove", handleRemove);
+      map.off("pm:remove", handleRemove as unknown as L.LeafletEventHandlerFn);
       map.pm.removeControls();
     };
   }, [map, onRoofChange]);
+
+  // Obstruction mode: switch draw style and auto-start polygon drawing.
+  useEffect(() => {
+    if (obstructionMode) {
+      map.pm.setPathOptions(OBSTRUCTION_STYLE);
+      map.pm.enableDraw("Polygon");
+    } else {
+      map.pm.disableDraw();
+      map.pm.setPathOptions(ROOF_STYLE);
+    }
+  }, [obstructionMode, map]);
+
+  // Expose programmatic removal (for the sidebar's per-row delete button).
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      removeObstruction: (id: string) => {
+        const layer = obstructionLayers.current.get(id);
+        if (layer) {
+          map.removeLayer(layer);
+          obstructionLayers.current.delete(id);
+        }
+      },
+    };
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef, map]);
 
   // Render an externally supplied roof (instant demo) and fly to it.
   useEffect(() => {
     if (!externalRoof) return;
 
-    for (const layer of map.pm.getGeomanLayers() as L.Layer[]) {
-      map.removeLayer(layer);
+    for (const layer of map.pm.getGeomanLayers() as MetaLayer[]) {
+      if (layer._kind !== "obstruction") map.removeLayer(layer);
     }
     if (externalLayerRef.current) {
       map.removeLayer(externalLayerRef.current);
     }
 
-    const layer = L.geoJSON(externalRoof, { style: ROOF_STYLE }).addTo(map);
+    const layer = L.geoJSON(externalRoof, { style: ROOF_STYLE });
+    layer.addTo(map);
     externalLayerRef.current = layer;
 
     // Keep the demo shape editable so users can tweak it like a drawn one.
     layer.eachLayer((child) => {
+      (child as MetaLayer)._kind = "roof";
       child.on("pm:edit", () => {
         const feature = (child as unknown as {
           toGeoJSON: () => Feature<Polygon>;
@@ -245,7 +332,7 @@ function DrawControls({ onRoofChange, externalRoof }: RoofMapProps) {
   return null;
 }
 
-export function RoofMap({ onRoofChange, externalRoof }: RoofMapProps) {
+export function RoofMap(props: RoofMapProps) {
   const [showLabels, setShowLabels] = useState(true);
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
 
@@ -302,7 +389,7 @@ export function RoofMap({ onRoofChange, externalRoof }: RoofMapProps) {
 
       <SearchBox onResult={setSearchResult} />
       <LayerToggle showLabels={showLabels} onChange={setShowLabels} />
-      <DrawControls onRoofChange={onRoofChange} externalRoof={externalRoof} />
+      <DrawControls {...props} />
     </MapContainer>
   );
 }

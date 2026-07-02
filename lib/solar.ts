@@ -31,6 +31,8 @@ export interface ProductionInputs {
   moduleDensity: number;
   /** Performance ratio (0–1): temperature, soiling, inverter, wiring losses. */
   performanceRatio: number;
+  /** Monthly beam fraction blocked by obstructions (0–1 each), from lib/shading. */
+  beamShadeMonthly?: number[];
 }
 
 export interface ProductionResult {
@@ -47,7 +49,7 @@ export interface ProductionResult {
 
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 // Klein's recommended average day-of-year for each month.
-const REPRESENTATIVE_DOY = [17, 47, 75, 105, 135, 162, 198, 228, 258, 288, 318, 344];
+export const REPRESENTATIVE_DOY = [17, 47, 75, 105, 135, 162, 198, 228, 258, 288, 318, 344];
 const GROUND_ALBEDO = 0.2;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -55,7 +57,7 @@ const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
 /** Solar declination for a given day-of-year (Cooper's equation), degrees. */
-function declination(dayOfYear: number): number {
+export function declination(dayOfYear: number): number {
   return 23.45 * Math.sin(toRad((360 * (284 + dayOfYear)) / 365));
 }
 
@@ -95,12 +97,21 @@ export function azimuthFactor(azimuth: number): number {
   return 1 - 0.2 * (1 - Math.cos(deviation));
 }
 
-/** Monthly-average daily POA irradiance (kWh/m²/day) via isotropic transposition. */
+/**
+ * Monthly-average daily POA irradiance (kWh/m²/day) via isotropic transposition.
+ *
+ * `beamShadeMonthly` (0–1 per month, optional) is the fraction of beam
+ * irradiance blocked by user-marked obstructions — produced by the horizon
+ * simulation in `lib/shading.ts`. Only the beam component is reduced; under
+ * the isotropic assumption, diffuse is left intact (a slight, honest
+ * overestimate for heavily obstructed skies).
+ */
 export function transposeToPoa(
   irradiance: IrradianceData,
   latitude: number,
   tilt: number,
-  azimuth: number
+  azimuth: number,
+  beamShadeMonthly?: number[]
 ): number[] {
   const beta = toRad(tilt);
   const azFactor = azimuthFactor(azimuth);
@@ -111,8 +122,13 @@ export function transposeToPoa(
     const diffuse = clamp(irradiance.dhi[month] ?? 0, 0, ghi);
     const beam = Math.max(0, ghi - diffuse);
     const rb = beamRatio(latitude, tilt, declination(REPRESENTATIVE_DOY[month] ?? 172));
+    const shadeKeep = 1 - clamp(beamShadeMonthly?.[month] ?? 0, 0, 1);
 
-    return beam * rb * azFactor + diffuse * skyView + ghi * GROUND_ALBEDO * groundView;
+    return (
+      beam * rb * azFactor * shadeKeep +
+      diffuse * skyView +
+      ghi * GROUND_ALBEDO * groundView
+    );
   });
 }
 
@@ -126,10 +142,11 @@ export function estimateProduction(inputs: ProductionInputs): ProductionResult {
     usableAreaSqm,
     moduleDensity,
     performanceRatio,
+    beamShadeMonthly,
   } = inputs;
 
   const systemSizeKwp = usableAreaSqm * moduleDensity;
-  const poaDaily = transposeToPoa(irradiance, latitude, tilt, azimuth);
+  const poaDaily = transposeToPoa(irradiance, latitude, tilt, azimuth, beamShadeMonthly);
 
   const monthlyPoa = poaDaily.map((daily, m) => daily * (DAYS_IN_MONTH[m] ?? 30));
   const poaAnnual = monthlyPoa.reduce((sum, v) => sum + v, 0);

@@ -154,7 +154,7 @@ const STEPS = [
   {
     icon: CloudSun,
     title: "Physics",
-    body: "NASA POWER climatology for your exact coordinates, transposed to the panel plane with a Liu-Jordan isotropic model, then E = kWp × POA × PR with explicit derating. No city-level averages, no magic numbers.",
+    body: "NASA POWER climatology for your exact coordinates, transposed to the panel plane with a Liu-Jordan model. Mark a tall neighbour and SolarSetu builds a horizon profile, simulates the sun's path hourly, and prices the shadow.",
   },
   {
     icon: BadgeIndianRupee,

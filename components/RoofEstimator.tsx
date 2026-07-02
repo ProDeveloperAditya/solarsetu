@@ -343,8 +343,10 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
   ]);
 
   return (
-    <div className="flex h-full flex-col bg-slate-950 text-slate-100 lg:flex-row">
-      <div className="relative min-h-[45vh] flex-1">
+    <div className="flex flex-col bg-slate-950 text-slate-100 lg:h-full lg:flex-row">
+      {/* Mobile: fixed-height map, page scrolls naturally below.
+          Desktop: split pane filling the viewport-height section. */}
+      <div className="relative h-[55dvh] shrink-0 lg:h-auto lg:flex-1">
         <RoofMap
           onRoofChange={setRoof}
           externalRoof={externalRoof}
@@ -363,7 +365,7 @@ export function RoofEstimator({ demoTick = 0 }: RoofEstimatorProps) {
         )}
       </div>
 
-      <aside className="w-full shrink-0 space-y-4 overflow-y-auto border-t border-slate-800 p-5 lg:w-96 lg:border-l lg:border-t-0">
+      <aside className="w-full shrink-0 space-y-4 border-t border-slate-800 p-5 lg:w-96 lg:overflow-y-auto lg:border-l lg:border-t-0">
         {!geometry ? (
           <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/50 p-5 text-sm leading-relaxed text-slate-400">
             <p className="mb-2 flex items-center gap-2 font-medium text-slate-200">

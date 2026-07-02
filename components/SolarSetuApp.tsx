@@ -19,7 +19,7 @@ export function SolarSetuApp() {
         <Hero onDemo={handleDemo} />
         <section
           id="estimate"
-          className="h-[calc(100dvh-3.5rem)] min-h-[560px] scroll-mt-14 border-t border-slate-800/80"
+          className="scroll-mt-14 border-t border-slate-800/80 lg:h-[calc(100dvh-3.5rem)] lg:min-h-[560px]"
         >
           <RoofEstimator demoTick={demoTick} />
         </section>

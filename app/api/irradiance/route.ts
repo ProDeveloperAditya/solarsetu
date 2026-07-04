@@ -25,7 +25,11 @@ export async function GET(request: Request): Promise<Response> {
     `&community=RE&longitude=${lng}&latitude=${lat}&format=JSON`;
 
   try {
-    const res = await fetch(url, { next: { revalidate: 86400 } });
+    const res = await fetch(url, {
+      next: { revalidate: 86400 },
+      // A hung NASA response must not hang this handler with it.
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) {
       return Response.json({ error: "NASA POWER is unavailable." }, { status: 502 });
     }
@@ -49,7 +53,10 @@ export async function GET(request: Request): Promise<Response> {
       return Number.isFinite(value) ? Math.min(Math.max(value, 0), ceiling) : 0;
     });
 
-    if (ghi.some((v) => !Number.isFinite(v) || v < 0)) {
+    // NASA's fill value is -999 and ANN can be absent — validate the annual
+    // figure the same way as the monthly series.
+    const annualGhi = Number(ghiRaw["ANN"]);
+    if (ghi.some((v) => !Number.isFinite(v) || v < 0) || !Number.isFinite(annualGhi) || annualGhi < 0) {
       return Response.json(
         { error: "No solar data is available for this location." },
         { status: 422 }
@@ -59,7 +66,7 @@ export async function GET(request: Request): Promise<Response> {
     const payload: IrradianceData = {
       ghi,
       dhi,
-      annualGhi: Number(ghiRaw["ANN"]),
+      annualGhi,
     };
     return Response.json(payload);
   } catch {

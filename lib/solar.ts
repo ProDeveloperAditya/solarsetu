@@ -114,7 +114,9 @@ export function transposeToPoa(
   beamShadeMonthly?: number[]
 ): number[] {
   const beta = toRad(tilt);
-  const azFactor = azimuthFactor(azimuth);
+  // Azimuth only matters once the panel is tilted — a horizontal panel has no
+  // facing direction, so the off-south penalty is scaled in with sin(tilt).
+  const azFactor = 1 - (1 - azimuthFactor(azimuth)) * Math.sin(beta);
   const skyView = (1 + Math.cos(beta)) / 2;
   const groundView = (1 - Math.cos(beta)) / 2;
 

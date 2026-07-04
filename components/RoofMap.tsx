@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
@@ -23,7 +23,7 @@ interface RoofMapProps {
   onObstructionAdd?: (id: string, polygon: Feature<Polygon>) => void;
   onObstructionEdit?: (id: string, polygon: Feature<Polygon>) => void;
   onObstructionRemove?: (id: string) => void;
-  apiRef?: React.MutableRefObject<RoofMapApi | null>;
+  apiRef?: RefObject<RoofMapApi | null>;
 }
 
 interface SearchResult {
@@ -70,7 +70,7 @@ function SearchBox({ onResult }: { onResult: (result: SearchResult) => void }) {
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
-  async function handleSearch(event: React.FormEvent) {
+  async function handleSearch(event: FormEvent) {
     event.preventDefault();
     const q = query.trim();
     if (!q) return;
@@ -80,7 +80,11 @@ function SearchBox({ onResult }: { onResult: (result: SearchResult) => void }) {
       const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&q=${encodeURIComponent(
         q
       )}`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        // Don't leave the spinner stuck if Nominatim hangs.
+        signal: AbortSignal.timeout(8_000),
+      });
       const results = (await res.json()) as {
         lat: string;
         lon: string;
@@ -189,10 +193,17 @@ function DrawControls({
   const idCounter = useRef(0);
 
   // Keep latest values in refs so the main effect subscribes exactly once.
+  // Synced in effects (not during render) per the react-hooks/refs rule.
   const modeRef = useRef(obstructionMode);
-  modeRef.current = obstructionMode;
   const callbacksRef = useRef({ onObstructionAdd, onObstructionEdit, onObstructionRemove });
-  callbacksRef.current = { onObstructionAdd, onObstructionEdit, onObstructionRemove };
+
+  useEffect(() => {
+    modeRef.current = obstructionMode;
+  }, [obstructionMode]);
+
+  useEffect(() => {
+    callbacksRef.current = { onObstructionAdd, onObstructionEdit, onObstructionRemove };
+  }, [onObstructionAdd, onObstructionEdit, onObstructionRemove]);
 
   useEffect(() => {
     map.pm.addControls({

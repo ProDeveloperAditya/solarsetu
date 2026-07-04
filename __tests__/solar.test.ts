@@ -41,6 +41,11 @@ describe("transposeToPoa", () => {
     poa.forEach((v, m) => expect(v).toBeCloseTo(DELHI.ghi[m]!, 3));
   });
 
+  it("ignores azimuth for a flat panel (no facing direction at tilt 0)", () => {
+    const poa = transposeToPoa(DELHI, 28.6, 0, 90);
+    poa.forEach((v, m) => expect(v).toBeCloseTo(DELHI.ghi[m]!, 3));
+  });
+
   it("gains annual insolation at optimal tilt vs flat", () => {
     const flat = transposeToPoa(DELHI, 28.6, 0, 180).reduce((a, b) => a + b, 0);
     const tilted = transposeToPoa(DELHI, 28.6, 29, 180).reduce((a, b) => a + b, 0);

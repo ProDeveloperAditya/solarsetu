@@ -47,9 +47,9 @@ Because most "solar calculators" are a spreadsheet behind a form: you type your 
 - 📈 **Honest 25-year finance** — tariff escalation grows your savings, panel degradation shrinks them, payback is interpolated to the fraction of a year
 - 🔍 **Transparent by design** — every assumption (tilt, azimuth, performance ratio, tariff, cost…) is a visible, adjustable slider. The estimate is auditable, not a black box.
 
-<!-- Screenshot: docs/screenshot.png — a traced roof + results sidebar
-![SolarSetu — roof traced on satellite imagery with live ROI results](docs/screenshot.png)
--->
+<br/>
+
+![SolarSetu — a rooftop traced on satellite imagery in Whitefield, Bengaluru, with live results: 15.7 kWp system, 4-year payback, ₹78,000 PM Surya Ghar subsidy](docs/screenshot.png)
 
 ---
 
